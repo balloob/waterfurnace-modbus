@@ -1,0 +1,50 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "waterfurnace-modbus"
+version = "0.0.0"
+description = "Read a WaterFurnace Aurora geothermal heat pump (incl. the variable-speed Series 7) over Modbus."
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "Apache-2.0" }
+authors = [{ name = "WaterFurnace Modbus contributors" }]
+keywords = ["modbus", "waterfurnace", "aurora", "geothermal", "heat-pump", "home-assistant"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Topic :: Home Automation",
+]
+# Protocol + the device-modelling framework (modbus_connection.model). The caller
+# injects a ModbusUnit built from whichever backend they choose.
+dependencies = ["modbus-connection>=3.0,<4"]
+
+[project.optional-dependencies]
+# Concrete backend for the script/query.py CLI (pip install waterfurnace-modbus[cli]).
+cli = ["modbus-connection[pymodbus]>=3.0,<4"]
+
+[project.urls]
+Homepage = "https://github.com/balloob/waterfurnace-modbus"
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=0.24",
+    # Tests run against the in-memory mock backend that ships with
+    # modbus-connection (its pytest plugin is auto-registered); no real backend
+    # or server is needed.
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/waterfurnace_modbus"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py312"
+src = ["src"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B"]
