@@ -1,4 +1,4 @@
-"""Fixtures: a WaterFurnace over modbus-connection's in-memory mock backend.
+"""Fixtures: a Series7 over modbus-connection's in-memory mock backend.
 
 The mock backend (and its ``mock_modbus_unit`` fixture) ship with
 ``modbus-connection`` as an auto-registered pytest plugin, so there is no real
@@ -12,7 +12,7 @@ from __future__ import annotations
 import pytest
 from modbus_connection.mock import MockModbusUnit
 
-from waterfurnace_modbus import WaterFurnace
+from waterfurnace_modbus import Series7
 
 
 def _ascii(text: str) -> list[int]:
@@ -146,7 +146,7 @@ HOLDING: dict[int, int | list[int]] = {
 
 
 @pytest.fixture
-def waterfurnace(mock_modbus_unit: MockModbusUnit) -> WaterFurnace:
-    """A WaterFurnace over the mock unit, preloaded with device values."""
+def series7(mock_modbus_unit: MockModbusUnit) -> Series7:
+    """A Series7 over the mock unit, preloaded with device values."""
     mock_modbus_unit.holding.update(HOLDING)
-    return WaterFurnace(mock_modbus_unit)
+    return Series7(mock_modbus_unit)

@@ -29,9 +29,9 @@ from typing import cast
 from modbus_connection import ModbusConnection, ModbusError, ModbusUnit
 from modbus_connection.model import Component, RegisterField
 
-from waterfurnace_modbus import WaterFurnace
+from waterfurnace_modbus import Series7
 
-# (label, attribute name on WaterFurnace) — the order things are printed.
+# (label, attribute name on Series7) — the order things are printed.
 SECTIONS: list[tuple[str, str]] = [
     ("Device", "info"),
     ("Configuration", "config"),
@@ -176,7 +176,7 @@ def _print_section(label: str, rows: list[tuple[str, str, str]]) -> None:
         print(f"  {name:<{width}}  {value}{suffix}")
 
 
-def _print(device: WaterFurnace) -> None:
+def _print(device: Series7) -> None:
     for label, attr in SECTIONS:
         _print_section(label, _values(getattr(device, attr)))
     # Only print zones the unit actually has.
@@ -193,7 +193,7 @@ async def _run(args: argparse.Namespace) -> int:
         return 1
     counting = _CountingUnit(connection.for_unit(args.unit))
     try:
-        device = WaterFurnace(cast(ModbusUnit, counting))
+        device = Series7(cast(ModbusUnit, counting))
         start = time.monotonic()
         await device.async_update()
         elapsed = time.monotonic() - start

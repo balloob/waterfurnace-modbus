@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 from modbus_connection.mock import MockModbusUnit
 
-from waterfurnace_modbus import HeatingMode, SystemOutput, WaterFurnace
+from waterfurnace_modbus import HeatingMode, Series7, SystemOutput
 
 _SPEC = importlib.util.spec_from_file_location(
     "waterfurnace_query", Path(__file__).resolve().parents[1] / "script" / "query.py"
@@ -48,7 +48,7 @@ def test_parse_args_serial() -> None:
 
 def test_values_lists_every_subsystem_field(mock_modbus_unit: MockModbusUnit) -> None:
     """Each sub-system's public fields are enumerated, methods excluded."""
-    device = WaterFurnace(mock_modbus_unit)
+    device = Series7(mock_modbus_unit)
     rows = query._values(device.compressor)
     names = {name for name, _value, _unit in rows}
     assert {"speed_actual", "discharge_pressure", "superheat"} <= names
@@ -64,7 +64,7 @@ def test_values_lists_every_subsystem_field(mock_modbus_unit: MockModbusUnit) ->
 def test_print_runs(
     capsys: pytest.CaptureFixture[str], mock_modbus_unit: MockModbusUnit
 ) -> None:
-    device = WaterFurnace(mock_modbus_unit)
+    device = Series7(mock_modbus_unit)
     query._print(device)
     out = capsys.readouterr().out
     assert "Device" in out

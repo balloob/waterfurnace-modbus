@@ -27,14 +27,13 @@ if TYPE_CHECKING:
 MAX_ZONES = 6  # the IZ2 board supports up to six zones
 
 
-class WaterFurnace:
-    """A WaterFurnace Aurora heat pump reached through a ``ModbusUnit``.
+class Series7:
+    """A WaterFurnace 7 Series Aurora heat pump reached through a ``ModbusUnit``.
 
-    Modelled for the variable-speed Series 7, but the map covers the wider Aurora
-    ABC/AXB/IZ2/VS-drive register set. The device is a tree of
-    independently-updatable sub-systems::
+    Modelled for the variable-speed 7 Series, using the Aurora ABC/AXB/IZ2/VS-drive
+    register set. The device is a tree of independently-updatable sub-systems::
 
-        pump_heat = WaterFurnace(unit)
+        pump_heat = Series7(unit)
         await pump_heat.async_update()
         pump_heat.sensors.entering_water           # °F
         pump_heat.compressor.speed_actual          # stage 0-12

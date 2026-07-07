@@ -11,9 +11,9 @@ from waterfurnace_modbus import (
     FanMode,
     HeatingMode,
     PumpType,
+    Series7,
     SystemOutput,
     SystemStatus,
-    WaterFurnace,
     ZoneCall,
 )
 from waterfurnace_modbus.ranges import REGISTER_RANGES
@@ -49,9 +49,9 @@ class _CountingUnit:
         return getattr(self._inner, name)
 
 
-async def test_device_info(waterfurnace: WaterFurnace) -> None:
-    await waterfurnace.async_update()
-    info = waterfurnace.info
+async def test_device_info(series7: Series7) -> None:
+    await series7.async_update()
+    info = series7.info
     assert info.manufacturer == "WaterFurnace"
     assert info.model == "NDV049A111"
     assert info.serial_number == "1234567890"
@@ -59,9 +59,9 @@ async def test_device_info(waterfurnace: WaterFurnace) -> None:
     assert info.program == "ABCVSP"
 
 
-async def test_sensors(waterfurnace: WaterFurnace) -> None:
-    await waterfurnace.async_update()
-    s = waterfurnace.sensors
+async def test_sensors(series7: Series7) -> None:
+    await series7.async_update()
+    s = series7.sensors
     assert s.entering_water == pytest.approx(50.0)
     assert s.leaving_water == pytest.approx(45.0)
     assert s.entering_air == pytest.approx(70.0)
@@ -69,9 +69,9 @@ async def test_sensors(waterfurnace: WaterFurnace) -> None:
     assert s.relative_humidity == 45
 
 
-async def test_status_outputs_and_switches(waterfurnace: WaterFurnace) -> None:
-    await waterfurnace.async_update()
-    status = waterfurnace.status
+async def test_status_outputs_and_switches(series7: Series7) -> None:
+    await series7.async_update()
+    status = series7.status
     assert SystemOutput.COMPRESSOR_1 in status.outputs
     assert SystemOutput.BLOWER in status.outputs
     assert SystemOutput.COMPRESSOR_2 not in status.outputs
@@ -88,16 +88,16 @@ async def test_status_fault_decode() -> None:
     """A locked-out high-pressure fault decodes to its code and name."""
     inner = MockModbusConnection().for_unit(1)
     inner.holding[25] = 0x8000 | 2  # lockout bit + fault code 2
-    device = WaterFurnace(inner)
+    device = Series7(inner)
     await device.status.async_update()
     assert device.status.locked_out is True
     assert device.status.fault_code == 2
     assert device.status.fault == "High Pressure"
 
 
-async def test_compressor_vs_drive(waterfurnace: WaterFurnace) -> None:
-    await waterfurnace.async_update()
-    c = waterfurnace.compressor
+async def test_compressor_vs_drive(series7: Series7) -> None:
+    await series7.async_update()
+    c = series7.compressor
     assert c.speed_desired == 6
     assert c.speed_actual == 5
     assert c.discharge_pressure == pytest.approx(350.0)
@@ -110,26 +110,26 @@ async def test_compressor_vs_drive(waterfurnace: WaterFurnace) -> None:
     assert c.stage_1_amps == pytest.approx(12.0)
 
 
-async def test_blower_and_pump(waterfurnace: WaterFurnace) -> None:
-    await waterfurnace.async_update()
-    assert waterfurnace.blower.speed == 7
-    assert waterfurnace.blower.high_compressor_speed == 9
-    assert waterfurnace.blower.amps == pytest.approx(2.5)
-    assert waterfurnace.pump.output == 65
-    assert waterfurnace.pump.waterflow == pytest.approx(9.5)
-    assert waterfurnace.pump.loop_pressure == pytest.approx(55.0)
+async def test_blower_and_pump(series7: Series7) -> None:
+    await series7.async_update()
+    assert series7.blower.speed == 7
+    assert series7.blower.high_compressor_speed == 9
+    assert series7.blower.amps == pytest.approx(2.5)
+    assert series7.pump.output == 65
+    assert series7.pump.waterflow == pytest.approx(9.5)
+    assert series7.pump.loop_pressure == pytest.approx(55.0)
 
 
-async def test_dhw(waterfurnace: WaterFurnace) -> None:
-    await waterfurnace.async_update()
-    assert waterfurnace.dhw.enabled is True
-    assert waterfurnace.dhw.setpoint == pytest.approx(130.0)
-    assert waterfurnace.dhw.water_temperature == pytest.approx(125.0)
+async def test_dhw(series7: Series7) -> None:
+    await series7.async_update()
+    assert series7.dhw.enabled is True
+    assert series7.dhw.setpoint == pytest.approx(130.0)
+    assert series7.dhw.water_temperature == pytest.approx(125.0)
 
 
-async def test_thermostat_reads(waterfurnace: WaterFurnace) -> None:
-    await waterfurnace.async_update()
-    t = waterfurnace.thermostat
+async def test_thermostat_reads(series7: Series7) -> None:
+    await series7.async_update()
+    t = series7.thermostat
     assert t.ambient_temperature == pytest.approx(72.0)
     assert t.heating_setpoint == pytest.approx(70.0)
     assert t.cooling_setpoint == pytest.approx(75.0)
@@ -137,20 +137,20 @@ async def test_thermostat_reads(waterfurnace: WaterFurnace) -> None:
     assert t.fan_mode is FanMode.CONTINUOUS
 
 
-async def test_energy(waterfurnace: WaterFurnace) -> None:
-    await waterfurnace.async_update()
-    e = waterfurnace.energy
+async def test_energy(series7: Series7) -> None:
+    await series7.async_update()
+    e = series7.energy
     assert e.compressor_power == 2400
     assert e.total_power == 2780
     assert e.heat_of_extraction == 18000
     assert e.heat_of_rejection == 24000
 
 
-async def test_independent_component_update(waterfurnace: WaterFurnace) -> None:
+async def test_independent_component_update(series7: Series7) -> None:
     """A sub-system refreshes on its own, without the rest."""
-    await waterfurnace.dhw.async_update()
-    assert waterfurnace.dhw.setpoint == pytest.approx(130.0)
-    assert waterfurnace.compressor.speed_actual is None  # not updated yet
+    await series7.dhw.async_update()
+    assert series7.dhw.setpoint == pytest.approx(130.0)
+    assert series7.compressor.speed_actual is None  # not updated yet
 
 
 async def test_full_update_consolidates_reads() -> None:
@@ -158,7 +158,7 @@ async def test_full_update_consolidates_reads() -> None:
     inner = MockModbusConnection().for_unit(1)
     inner.holding.update(HOLDING)
     unit = _CountingUnit(inner)
-    device = WaterFurnace(unit)  # type: ignore[arg-type]
+    device = Series7(unit)  # type: ignore[arg-type]
 
     field_count = sum(len(c._register_fields) for c in device.components)
     await device.async_update()
@@ -173,7 +173,7 @@ async def test_full_update_never_reads_across_an_unreadable_gap() -> None:
     """Every block stays inside the controller's readable ranges (no NAK risk)."""
     inner = MockModbusConnection().for_unit(1)
     unit = _CountingUnit(inner)
-    device = WaterFurnace(unit)  # type: ignore[arg-type]
+    device = Series7(unit)  # type: ignore[arg-type]
     await device.async_update()
 
     def readable(address: int) -> bool:
@@ -187,56 +187,56 @@ async def test_full_update_never_reads_across_an_unreadable_gap() -> None:
     assert all(count <= 100 for _start, count in unit.register_blocks)
 
 
-async def test_update_listener(waterfurnace: WaterFurnace) -> None:
+async def test_update_listener(series7: Series7) -> None:
     calls: list[int] = []
-    unsubscribe = waterfurnace.compressor.add_update_listener(lambda: calls.append(1))
-    await waterfurnace.compressor.async_update()
-    await waterfurnace.compressor.async_update()
+    unsubscribe = series7.compressor.add_update_listener(lambda: calls.append(1))
+    await series7.compressor.async_update()
+    await series7.compressor.async_update()
     assert len(calls) == 2
     unsubscribe()
-    await waterfurnace.compressor.async_update()
+    await series7.compressor.async_update()
     assert len(calls) == 2  # no longer notified
 
 
-async def test_write_setpoint_uses_write_register(waterfurnace: WaterFurnace) -> None:
+async def test_write_setpoint_uses_write_register(series7: Series7) -> None:
     """The heating setpoint reads from 745 but writes to 12619."""
-    unit = waterfurnace.thermostat._unit
-    await waterfurnace.thermostat.set_heating_setpoint(68.0)
+    unit = series7.thermostat._unit
+    await series7.thermostat.set_heating_setpoint(68.0)
     # Written to the command register (12619), not the read register (745).
     assert (await unit.read_holding_registers(12619, 1))[0] == 680
 
 
-async def test_write_mode_uses_command_register(waterfurnace: WaterFurnace) -> None:
+async def test_write_mode_uses_command_register(series7: Series7) -> None:
     """Setting the mode writes the plain code to 12606."""
-    unit = waterfurnace.thermostat._unit
-    await waterfurnace.thermostat.set_mode(HeatingMode.COOL)
+    unit = series7.thermostat._unit
+    await series7.thermostat.set_mode(HeatingMode.COOL)
     assert (await unit.read_holding_registers(12606, 1))[0] == int(HeatingMode.COOL)
 
 
-async def test_write_dhw_setpoint_roundtrip(waterfurnace: WaterFurnace) -> None:
-    await waterfurnace.async_update()
-    await waterfurnace.dhw.set_setpoint(125.0)
-    await waterfurnace.dhw.async_update()
-    assert waterfurnace.dhw.setpoint == pytest.approx(125.0)
+async def test_write_dhw_setpoint_roundtrip(series7: Series7) -> None:
+    await series7.async_update()
+    await series7.dhw.set_setpoint(125.0)
+    await series7.dhw.async_update()
+    assert series7.dhw.setpoint == pytest.approx(125.0)
 
 
-async def test_write_rejects_out_of_range(waterfurnace: WaterFurnace) -> None:
+async def test_write_rejects_out_of_range(series7: Series7) -> None:
     with pytest.raises(ValueError):
-        await waterfurnace.thermostat.set_heating_setpoint(200.0)
+        await series7.thermostat.set_heating_setpoint(200.0)
     with pytest.raises(ValueError):
-        await waterfurnace.blower.set_blower_only_speed(99)
+        await series7.blower.set_blower_only_speed(99)
     with pytest.raises(ValueError):
-        await waterfurnace.dhw.set_setpoint(200.0)
+        await series7.dhw.set_setpoint(200.0)
 
 
-async def test_write_rejects_readonly(waterfurnace: WaterFurnace) -> None:
+async def test_write_rejects_readonly(series7: Series7) -> None:
     with pytest.raises(AttributeError):
-        await waterfurnace.compressor.write("speed_actual", 3)
+        await series7.compressor.write("speed_actual", 3)
 
 
-async def test_configuration(waterfurnace: WaterFurnace) -> None:
-    await waterfurnace.async_update()
-    config = waterfurnace.config
+async def test_configuration(series7: Series7) -> None:
+    await series7.async_update()
+    config = series7.config
     assert config.number_of_zones == 2
     assert config.blower_type is BlowerType.ECM_208_230
     assert config.pump_type is PumpType.VS_PUMP
@@ -245,9 +245,9 @@ async def test_configuration(waterfurnace: WaterFurnace) -> None:
     assert config.brine_type == "Antifreeze"
 
 
-async def test_peripherals(waterfurnace: WaterFurnace) -> None:
-    await waterfurnace.async_update()
-    p = waterfurnace.peripherals
+async def test_peripherals(series7: Series7) -> None:
+    await series7.async_update()
+    p = series7.peripherals
     assert p.has_thermostat is True
     assert p.has_axb is True
     assert p.has_iz2 is True
@@ -257,9 +257,9 @@ async def test_peripherals(waterfurnace: WaterFurnace) -> None:
     assert p.moc_version == pytest.approx(1.5)
 
 
-async def test_humidistat(waterfurnace: WaterFurnace) -> None:
-    await waterfurnace.async_update()
-    h = waterfurnace.humidistat
+async def test_humidistat(series7: Series7) -> None:
+    await series7.async_update()
+    h = series7.humidistat
     assert h.auto_dehumidification is True
     assert h.auto_humidification is False
     assert h.humidification_target == 40
@@ -267,9 +267,9 @@ async def test_humidistat(waterfurnace: WaterFurnace) -> None:
     assert h.active_dehumidification is True
 
 
-async def test_compressor_vs_flags_and_subcool(waterfurnace: WaterFurnace) -> None:
-    await waterfurnace.async_update()
-    c = waterfurnace.compressor
+async def test_compressor_vs_flags_and_subcool(series7: Series7) -> None:
+    await series7.async_update()
+    c = series7.compressor
     assert not c.derate  # empty IntFlag is falsy
     assert not c.safe_mode
     assert not c.alarm
@@ -278,22 +278,22 @@ async def test_compressor_vs_flags_and_subcool(waterfurnace: WaterFurnace) -> No
     assert c.subcool_heating == pytest.approx(8.0)
 
 
-async def test_status_aux_heat_and_last_lockout(waterfurnace: WaterFurnace) -> None:
-    await waterfurnace.async_update()
+async def test_status_aux_heat_and_last_lockout(series7: Series7) -> None:
+    await series7.async_update()
     # outputs = compressor_1 + blower, no aux-heat bits set
-    assert waterfurnace.status.aux_heat_stage == 0
-    assert waterfurnace.status.last_lockout is None
+    assert series7.status.aux_heat_stage == 0
+    assert series7.status.last_lockout is None
 
 
-async def test_dealer(waterfurnace: WaterFurnace) -> None:
-    await waterfurnace.async_update()
-    assert waterfurnace.dealer.name == "ACME HVAC"
+async def test_dealer(series7: Series7) -> None:
+    await series7.async_update()
+    assert series7.dealer.name == "ACME HVAC"
 
 
-async def test_iz2_zone_decode(waterfurnace: WaterFurnace) -> None:
+async def test_iz2_zone_decode(series7: Series7) -> None:
     """Zone config words decode to the right per-zone values (dual stride)."""
-    await waterfurnace.async_update()
-    z1 = waterfurnace.zones[0]
+    await series7.async_update()
+    z1 = series7.zones[0]
     assert z1.ambient_temperature == pytest.approx(71.0)
     assert z1.mode is HeatingMode.HEAT
     assert z1.call is ZoneCall.HEAT_1
@@ -304,7 +304,7 @@ async def test_iz2_zone_decode(waterfurnace: WaterFurnace) -> None:
     assert z1.economy_priority is False
     assert z1.size == 45
 
-    z2 = waterfurnace.zones[1]  # reads its own +3 registers
+    z2 = series7.zones[1]  # reads its own +3 registers
     assert z2.ambient_temperature == pytest.approx(68.0)
     assert z2.mode is HeatingMode.COOL
     assert z2.call is ZoneCall.COOL_1
@@ -313,8 +313,8 @@ async def test_iz2_zone_decode(waterfurnace: WaterFurnace) -> None:
     assert z2.size == 25
 
 
-async def test_zone_write_uses_strided_registers(waterfurnace: WaterFurnace) -> None:
+async def test_zone_write_uses_strided_registers(series7: Series7) -> None:
     """Zone 2's setpoint write lands at 21203 + 9 (its strided command register)."""
-    unit = waterfurnace.zones[1]._unit
-    await waterfurnace.zones[1].set_heating_setpoint(67.0)
+    unit = series7.zones[1]._unit
+    await series7.zones[1].set_heating_setpoint(67.0)
     assert (await unit.read_holding_registers(21203 + 9, 1))[0] == 670

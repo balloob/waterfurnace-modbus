@@ -1,6 +1,6 @@
-"""waterfurnace-modbus — read a WaterFurnace Aurora heat pump over Modbus.
+"""waterfurnace-modbus — read a WaterFurnace 7 Series heat pump over Modbus.
 
-Construct ``WaterFurnace(unit)`` with a ``modbus_connection.ModbusUnit``, call
+Construct ``Series7(unit)`` with a ``modbus_connection.ModbusUnit``, call
 ``await device.async_update()``, then read its sub-systems as normal Python
 objects::
 
@@ -22,7 +22,6 @@ project. It is modelled primarily for the variable-speed Series 7 (the ``ABCVSP`
 program) but covers the wider ABC/AXB/IZ2 register set.
 """
 
-from .aurora import WaterFurnace
 from .blower import Blower
 from .compressor import Compressor
 from .config import Configuration
@@ -49,6 +48,7 @@ from .humidistat import Humidistat
 from .peripherals import Peripherals
 from .pump import Pump
 from .sensors import Sensors
+from .series7 import Series7
 from .status import Status
 from .thermostat import Thermostat
 from .utils import FAULTS, fault_name
@@ -74,6 +74,7 @@ __all__ = [
     "Pump",
     "PumpType",
     "Sensors",
+    "Series7",
     "Status",
     "SystemOutput",
     "SystemStatus",
@@ -81,7 +82,6 @@ __all__ = [
     "VSAlarm",
     "VSDriveDerate",
     "VSSafeMode",
-    "WaterFurnace",
     "Zone",
     "ZoneCall",
     "fault_name",

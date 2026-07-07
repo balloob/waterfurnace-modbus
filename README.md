@@ -14,7 +14,7 @@ against an in-memory mock of the controller.
 - It **consumes the connection abstraction**, not a backend: the API takes a
   [`modbus_connection.ModbusUnit`](../modbus-connection) and reads/writes through
   it. You choose the backend (pymodbus, tmodbus, …).
-- A `WaterFurnace` is a tree of independently-updatable **sub-systems**, each a
+- A `Series7` is a tree of independently-updatable **sub-systems**, each a
   `Component` that knows its own registers:
 
   | Attribute | What |
@@ -45,7 +45,7 @@ against an in-memory mock of the controller.
 ```python
 import asyncio
 from modbus_connection.pymodbus import connect_tcp
-from waterfurnace_modbus import WaterFurnace, HeatingMode
+from waterfurnace_modbus import Series7, HeatingMode
 
 
 async def main() -> None:
@@ -118,7 +118,7 @@ setpoints/modes, humidistat, energy monitoring, dealer info, and up to six IZ2
 zones. Only registers whose encoding is unknown even in the upstream map, and the
 raw fault-history buffer, are left out.
 
-`WaterFurnace.async_update()` refreshes **everything** — convenient for the CLI,
+`Series7.async_update()` refreshes **everything** — convenient for the CLI,
 but more than a Home Assistant integration needs each poll. Because every
 sub-system is an independent `Component`, an integration typically reads `config`
 and `peripherals` **once** to discover the hardware, then polls only the
