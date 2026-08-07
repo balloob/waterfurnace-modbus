@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import pytest
+from modbus_connection import ClientClosedError
 from modbus_connection.mock import MockModbusConnection, MockModbusUnit
+from modbus_connection.model import ComponentGroup
 
 from waterfurnace_modbus import (
     BlowerType,
@@ -84,11 +86,10 @@ async def test_status_outputs_and_switches(series7: Series7) -> None:
     assert status.fault is None
 
 
-async def test_status_fault_decode() -> None:
+async def test_status_fault_decode(mock_modbus_unit: MockModbusUnit) -> None:
     """A locked-out high-pressure fault decodes to its code and name."""
-    inner = MockModbusConnection().for_unit(1)
-    inner.holding[25] = 0x8000 | 2  # lockout bit + fault code 2
-    device = Series7(inner)
+    mock_modbus_unit.holding[25] = 0x8000 | 2  # lockout bit + fault code 2
+    device = Series7(mock_modbus_unit)
     await device.status.async_update()
     assert device.status.locked_out is True
     assert device.status.fault_code == 2
@@ -153,38 +154,84 @@ async def test_independent_component_update(series7: Series7) -> None:
     assert series7.compressor.speed_actual is None  # not updated yet
 
 
-async def test_full_update_consolidates_reads() -> None:
+async def test_full_update_consolidates_reads(mock_modbus_unit: MockModbusUnit) -> None:
     """A full device update pools all sub-systems into a few block reads."""
-    inner = MockModbusConnection().for_unit(1)
-    inner.holding.update(HOLDING)
-    unit = _CountingUnit(inner)
+    mock_modbus_unit.holding.update(HOLDING)
+    unit = _CountingUnit(mock_modbus_unit)
     device = Series7(unit)  # type: ignore[arg-type]
 
-    field_count = sum(len(c._register_fields) for c in device.components)
+    field_count = sum(len(c.declared_fields) for c in device.components)
     await device.async_update()
 
     # Fields collapse into range-aware block reads — meaningfully fewer than the
     # field count, and no coil reads (this device has none).
     assert unit.register_reads < field_count
     assert unit.coil_reads == 0
-
-
-async def test_full_update_never_reads_across_an_unreadable_gap() -> None:
-    """Every block stays inside the controller's readable ranges (no NAK risk)."""
-    inner = MockModbusConnection().for_unit(1)
-    unit = _CountingUnit(inner)
-    device = Series7(unit)  # type: ignore[arg-type]
-    await device.async_update()
-
-    def readable(address: int) -> bool:
-        return any(low <= address <= high for low, high in REGISTER_RANGES)
-
-    for start, count in unit.register_blocks:
-        assert all(readable(start + i) for i in range(count)), (
-            f"block {start}..{start + count - 1} crosses an unreadable gap"
-        )
     # No block exceeds the ABC's 100-register read cap.
     assert all(count <= 100 for _start, count in unit.register_blocks)
+
+
+async def test_full_update_never_reads_across_an_unreadable_gap(
+    unit: MockModbusUnit,
+) -> None:
+    """Every block stays inside the controller's readable ranges (no NAK risk)."""
+    device = Series7(unit)
+    # The same pooled read async_update() performs. async_read_raw reports every
+    # address it touched, so a block spanning a gap shows up as a read of an
+    # address no range declares.
+    raw = await ComponentGroup(unit, device.components).async_read_raw()
+
+    unreadable = {
+        address
+        for address in raw["holding"]
+        if not any(low <= address <= high for low, high in REGISTER_RANGES)
+    }
+    assert not unreadable, f"read addresses outside every readable range: {unreadable}"
+    # Everything on this device is a holding register; no other space is touched.
+    assert set(raw) == {"holding"}
+
+
+async def test_every_sub_system_plans_on_its_own(unit: MockModbusUnit) -> None:
+    """No sub-system declares a field that straddles a readable-range boundary.
+
+    A component polled on its own plans from its own fields, so a field that
+    starts inside a range and ends past its high is only rejected when that
+    component is planned — which the pooled group update need not do.
+    """
+    device = Series7(unit)
+    for component in device.components:
+        await component.async_update()
+
+
+async def test_update_survives_a_dropped_connection() -> None:
+    """A dropped link heals on the next update — the device is not rebuilt."""
+    connection = MockModbusConnection()
+    unit = connection.for_unit(1)
+    unit.holding.update(HOLDING)
+    device = Series7(unit)
+    await device.async_update()
+    assert device.sensors.entering_water == pytest.approx(50.0)
+
+    lost: list[int] = []
+    connection.on_connection_lost(lambda: lost.append(1))
+    connection.simulate_connection_lost()
+    assert lost == [1]
+
+    # The same device and sub-system handles keep working; the request reconnects.
+    await device.async_update()
+    assert device.sensors.entering_water == pytest.approx(50.0)
+
+
+async def test_update_after_close_raises() -> None:
+    """Closing is the owner's permanent end of the connection, not a drop."""
+    connection = MockModbusConnection()
+    unit = connection.for_unit(1)
+    unit.holding.update(HOLDING)
+    device = Series7(unit)
+    await connection.close()
+
+    with pytest.raises(ClientClosedError):
+        await device.async_update()
 
 
 async def test_update_listener(series7: Series7) -> None:
@@ -198,17 +245,19 @@ async def test_update_listener(series7: Series7) -> None:
     assert len(calls) == 2  # no longer notified
 
 
-async def test_write_setpoint_uses_write_register(series7: Series7) -> None:
+async def test_write_setpoint_uses_write_register(
+    series7: Series7, unit: MockModbusUnit
+) -> None:
     """The heating setpoint reads from 745 but writes to 12619."""
-    unit = series7.thermostat._unit
     await series7.thermostat.set_heating_setpoint(68.0)
     # Written to the command register (12619), not the read register (745).
     assert (await unit.read_holding_registers(12619, 1))[0] == 680
 
 
-async def test_write_mode_uses_command_register(series7: Series7) -> None:
+async def test_write_mode_uses_command_register(
+    series7: Series7, unit: MockModbusUnit
+) -> None:
     """Setting the mode writes the plain code to 12606."""
-    unit = series7.thermostat._unit
     await series7.thermostat.set_mode(HeatingMode.COOL)
     assert (await unit.read_holding_registers(12606, 1))[0] == int(HeatingMode.COOL)
 
@@ -313,8 +362,9 @@ async def test_iz2_zone_decode(series7: Series7) -> None:
     assert z2.size == 25
 
 
-async def test_zone_write_uses_strided_registers(series7: Series7) -> None:
+async def test_zone_write_uses_strided_registers(
+    series7: Series7, unit: MockModbusUnit
+) -> None:
     """Zone 2's setpoint write lands at 21203 + 9 (its strided command register)."""
-    unit = series7.zones[1]._unit
     await series7.zones[1].set_heating_setpoint(67.0)
     assert (await unit.read_holding_registers(21203 + 9, 1))[0] == 670

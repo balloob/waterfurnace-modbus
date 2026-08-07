@@ -150,3 +150,13 @@ def series7(mock_modbus_unit: MockModbusUnit) -> Series7:
     """A Series7 over the mock unit, preloaded with device values."""
     mock_modbus_unit.holding.update(HOLDING)
     return Series7(mock_modbus_unit)
+
+
+@pytest.fixture
+def unit(mock_modbus_unit: MockModbusUnit) -> MockModbusUnit:
+    """The mock unit the ``series7`` fixture reads and writes through.
+
+    Request it alongside ``series7`` to assert on the register store a write
+    landed in, rather than reaching for the unit a component holds.
+    """
+    return mock_modbus_unit

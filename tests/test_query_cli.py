@@ -29,21 +29,28 @@ def test_format_values() -> None:
 
 
 def test_parse_args_tcp() -> None:
-    args = query._parse_args(["tcp", "1.2.3.4", "--unit", "1"])
-    assert args.transport == "tcp"
-    assert args.host == "1.2.3.4"
+    args = query._parse_args(["1.2.3.4", "--unit", "1"])
+    assert args.transport == "tcp"  # the default transport
+    assert args.target == "1.2.3.4"
     assert args.unit == 1
-    assert args.port == 502
+    assert args.port is None  # unset: the backend's 502
     assert args.framer == "rtu"  # RTU-over-TCP default for Aurora gateways
 
 
 def test_parse_args_serial() -> None:
-    args = query._parse_args(["serial", "/dev/ttyUSB0"])
+    args = query._parse_args(["/dev/ttyUSB0", "--transport", "serial"])
     assert args.transport == "serial"
-    assert args.device == "/dev/ttyUSB0"
+    assert args.target == "/dev/ttyUSB0"
     assert args.unit == 1  # Aurora default slave address
     assert args.baudrate == 19200  # Aurora serial default
     assert args.parity == "E"  # 8E1
+    assert args.framer == "rtu"
+
+
+def test_parse_args_rejects_a_transport_the_aurora_does_not_offer() -> None:
+    """Only the RS-485 line and a gateway in front of it are on offer."""
+    with pytest.raises(SystemExit):
+        query._parse_args(["1.2.3.4", "--transport", "udp"])
 
 
 def test_values_lists_every_subsystem_field(mock_modbus_unit: MockModbusUnit) -> None:
@@ -55,9 +62,9 @@ def test_values_lists_every_subsystem_field(mock_modbus_unit: MockModbusUnit) ->
     # Methods / private helpers are not data rows.
     assert "async_update" not in names
     assert all(not n.startswith("_") for n in names)
-    # Framework internals (public in modbus-connection >= 3.3) must not leak in.
+    # Public framework attributes must not leak in as device values.
     assert names.isdisjoint(
-        {"register_items", "bit_items", "register_ranges", "max_span", "max_gap"}
+        {"declared_fields", "register_ranges", "register_space", "max_span", "max_gap"}
     )
 
 

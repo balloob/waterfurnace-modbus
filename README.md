@@ -13,7 +13,11 @@ against an in-memory mock of the controller.
 
 - It **consumes the connection abstraction**, not a backend: the API takes a
   [`modbus_connection.ModbusUnit`](../modbus-connection) and reads/writes through
-  it. You choose the backend (pymodbus, tmodbus, …).
+  it. You choose the backend (tmodbus, pymodbus, …).
+- Since `modbus-connection` 4.0 a connection **manages its own link**: it connects
+  on the first request and re-establishes itself after a drop, over the same unit
+  handle. Nothing has to rebuild the `Series7` object when the link goes down —
+  and a Home Assistant integration should **not** reload its config entry either.
 - A `Series7` is a tree of independently-updatable **sub-systems**, each a
   `Component` that knows its own registers:
 
@@ -44,14 +48,17 @@ against an in-memory mock of the controller.
 
 ```python
 import asyncio
-from modbus_connection.pymodbus import connect_tcp
+from modbus_connection import ModbusTcpParams
+from modbus_connection.tmodbus import ModbusConnection
 from waterfurnace_modbus import Series7, HeatingMode
 
 
 async def main() -> None:
-    conn = await connect_tcp("192.168.1.50", port=502)  # RTU-over-TCP gateway
+    # An RTU-over-TCP gateway. Constructing performs no I/O; the first read
+    # connects, and a later drop re-connects on its own.
+    conn = ModbusConnection(ModbusTcpParams(host="192.168.1.50", framer="rtu"))
     try:
-        heat_pump = WaterFurnace(conn.for_unit(1))       # unit 1 = the Aurora ABC
+        heat_pump = Series7(conn.for_unit(1))            # unit 1 = the Aurora ABC
         await heat_pump.async_update()
 
         print("Model:", heat_pump.info.model)
@@ -77,6 +84,10 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
+`close()` is the owner's permanent end of the connection — a later request raises
+`ClientClosedError`. A long-lived poller opens one connection and keeps it; it
+never closes between polls to force a reconnect.
+
 ### Updating just one sub-system
 
 ```python
@@ -93,14 +104,16 @@ or run via `uv run --extra cli`):
 
 ```bash
 # Network gateway (RTU-over-TCP by default — how Aurora RS-485 gateways work):
-uv run --extra cli python script/query.py tcp 192.168.1.50 --unit 1
+uv run --extra cli python script/query.py 192.168.1.50 --unit 1
 
 # Serial / USB (defaults to the Aurora 19200 8E1 line):
-uv run --extra cli python script/query.py serial /dev/ttyUSB0 --unit 1
+uv run --extra cli python script/query.py /dev/ttyUSB0 --transport serial --unit 1
 ```
 
-Use `--port`, `--framer {rtu,socket}` (TCP) or `--baudrate`/`--parity`/… (serial)
-to override defaults; `--help` lists them all. Output is grouped by sub-system.
+The connection arguments come from `modbus_connection.cli_helper`, narrowed to
+the two transports the Aurora offers. Use `--port`, `--framer {rtu,socket}`,
+`--timeout`, or `--baudrate`/`--parity`/… (serial) to override defaults; `--help`
+lists them all. Output is grouped by sub-system.
 
 ## Connection notes
 

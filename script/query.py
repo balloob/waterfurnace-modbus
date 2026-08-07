@@ -9,11 +9,11 @@ The Aurora ABC speaks Modbus RTU on RS-485 at 19200 8E1, unit address 1. Over a
 network it is almost always an RTU-over-TCP (transparent serial) gateway, so the
 ``tcp`` transport defaults to the ``rtu`` framer.
 
-The library only needs the connection *protocol*; this script picks the pymodbus
+The library only needs the connection *protocol*; this script needs a concrete
 backend, so run it with the ``cli`` extra::
 
-    uv run --extra cli python script/query.py tcp 192.168.1.50 --unit 1
-    uv run --extra cli python script/query.py serial /dev/ttyUSB0 --unit 1
+    uv run --extra cli python script/query.py 192.168.1.50 --unit 1
+    uv run --extra cli python script/query.py /dev/ttyUSB0 --transport serial
 """
 
 from __future__ import annotations
@@ -24,12 +24,21 @@ import inspect
 import sys
 import time
 from enum import Flag, IntEnum
-from typing import cast
 
-from modbus_connection import ModbusConnection, ModbusError, ModbusUnit
+from modbus_connection import ModbusError
+from modbus_connection.cli_helper import (
+    CountingUnit,
+    add_connection_args,
+    connect_from_args,
+)
 from modbus_connection.model import Component, RegisterField
 
 from waterfurnace_modbus import Series7
+
+# The connections the Aurora is reachable over: an RTU-over-TCP gateway (the
+# usual network path), native Modbus TCP for the rare socket-framing gateway,
+# and the RS-485 line itself. UDP and TLS are not paths this device offers.
+CONNECTIONS = (("tcp", "rtu"), ("tcp", "socket"), ("serial", "rtu"))
 
 # (label, attribute name on Series7) — the order things are printed.
 SECTIONS: list[tuple[str, str]] = [
@@ -48,92 +57,33 @@ SECTIONS: list[tuple[str, str]] = [
     ("Dealer", "dealer"),
 ]
 
-# Names carried by the framework base (register_items, ranges, max_span, write, …);
+# Names carried by the framework base (declared_fields, ranges, max_span, write, …);
 # a sub-system's own data fields never collide with these, so skipping them keeps
 # the dump to real device values.
 _FRAMEWORK_NAMES = frozenset(dir(Component))
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    sub = parser.add_subparsers(dest="transport", required=True)
-
-    # Shared options available on each transport (so `--unit` can follow the host).
-    common = argparse.ArgumentParser(add_help=False)
-    common.add_argument(
+    parser = argparse.ArgumentParser(
+        description=__doc__.splitlines()[0],
+        epilog=(
+            "Defaults are the Aurora's: RTU framing over TCP, and 19200 8E1 on "
+            "serial, at unit address 1."
+        ),
+    )
+    add_connection_args(parser, connections=CONNECTIONS)
+    # The unit id is not part of connecting, so it sits outside that group.
+    parser.add_argument(
         "--unit",
         type=int,
         default=1,
         help="Modbus unit/station address (default: 1)",
     )
-
-    tcp = sub.add_parser(
-        "tcp", parents=[common], help="connect over Modbus TCP (network gateway)"
-    )
-    tcp.add_argument("host", help="hostname or IP of the gateway/device")
-    tcp.add_argument("--port", type=int, default=502, help="TCP port (default: 502)")
-    tcp.add_argument(
-        "--framer",
-        choices=("rtu", "socket"),
-        default="rtu",
-        help=(
-            "wire framing: 'rtu' for RTU-over-TCP (transparent serial gateways, "
-            "the Aurora default) or 'socket' for native Modbus TCP (default: rtu)"
-        ),
-    )
-
-    serial = sub.add_parser(
-        "serial", parents=[common], help="connect over a serial/USB port"
-    )
-    serial.add_argument("device", help="serial device, e.g. /dev/ttyUSB0")
-    serial.add_argument("--baudrate", type=int, default=19200, help="default: 19200")
-    serial.add_argument("--parity", choices=("N", "E", "O"), default="E")
-    serial.add_argument("--stopbits", type=int, choices=(1, 2), default=1)
-    serial.add_argument("--bytesize", type=int, choices=(7, 8), default=8)
-
+    # add_connection_args carries the generic Modbus defaults (socket framing,
+    # 9600 8N1); a parser-level default overrides an argument-level one, so this
+    # states the Aurora's line settings without restating its arguments.
+    parser.set_defaults(framer="rtu", baudrate=19200, parity="E")
     return parser.parse_args(argv)
-
-
-async def _open(args: argparse.Namespace) -> ModbusConnection:
-    # Imported here so the module loads (and --help works) without a backend.
-    from modbus_connection.pymodbus import connect_serial, connect_tcp
-
-    if args.transport == "serial":
-        return await connect_serial(
-            args.device,
-            baudrate=args.baudrate,
-            parity=args.parity,
-            stopbits=args.stopbits,
-            bytesize=args.bytesize,
-        )
-    return await connect_tcp(args.host, port=args.port, framer=args.framer)
-
-
-class _CountingUnit:
-    """Wraps a ModbusUnit to count the Modbus reads it performs."""
-
-    def __init__(self, unit: ModbusUnit) -> None:
-        self._unit = unit
-        self.reads = 0
-
-    async def read_input_registers(self, address: int, count: int) -> list[int]:
-        self.reads += 1
-        return await self._unit.read_input_registers(address, count)
-
-    async def read_holding_registers(self, address: int, count: int) -> list[int]:
-        self.reads += 1
-        return await self._unit.read_holding_registers(address, count)
-
-    async def read_coils(self, address: int, count: int) -> list[bool]:
-        self.reads += 1
-        return await self._unit.read_coils(address, count)
-
-    async def read_discrete_inputs(self, address: int, count: int) -> list[bool]:
-        self.reads += 1
-        return await self._unit.read_discrete_inputs(address, count)
-
-    def __getattr__(self, name: str) -> object:
-        return getattr(self._unit, name)
 
 
 def _format(value: object) -> str:
@@ -186,14 +136,17 @@ def _print(device: Series7) -> None:
 
 
 async def _run(args: argparse.Namespace) -> int:
+    # A connection connects on demand, so this could go straight to the read.
+    # This one-shot dump connects eagerly anyway, to tell a connect failure apart
+    # from a device that answers but refuses a read.
     try:
-        connection = await _open(args)
+        connection = await connect_from_args(args)
     except ModbusError as err:
         print(f"Could not connect: {err}", file=sys.stderr)
         return 1
-    counting = _CountingUnit(connection.for_unit(args.unit))
+    counting = CountingUnit(connection.for_unit(args.unit))
     try:
-        device = Series7(cast(ModbusUnit, counting))
+        device = Series7(counting)
         start = time.monotonic()
         await device.async_update()
         elapsed = time.monotonic() - start
