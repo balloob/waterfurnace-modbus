@@ -172,14 +172,14 @@ async def test_full_update_consolidates_reads(mock_modbus_unit: MockModbusUnit) 
 
 
 async def test_full_update_never_reads_across_an_unreadable_gap(
-    unit: MockModbusUnit,
+    mock_modbus_unit: MockModbusUnit,
 ) -> None:
     """Every block stays inside the controller's readable ranges (no NAK risk)."""
-    device = Series7(unit)
+    device = Series7(mock_modbus_unit)
     # The same pooled read async_update() performs. async_read_raw reports every
     # address it touched, so a block spanning a gap shows up as a read of an
     # address no range declares.
-    raw = await ComponentGroup(unit, device.components).async_read_raw()
+    raw = await ComponentGroup(mock_modbus_unit, device.components).async_read_raw()
 
     unreadable = {
         address
@@ -191,14 +191,16 @@ async def test_full_update_never_reads_across_an_unreadable_gap(
     assert set(raw) == {"holding"}
 
 
-async def test_every_sub_system_plans_on_its_own(unit: MockModbusUnit) -> None:
+async def test_every_sub_system_plans_on_its_own(
+    mock_modbus_unit: MockModbusUnit,
+) -> None:
     """No sub-system declares a field that straddles a readable-range boundary.
 
     A component polled on its own plans from its own fields, so a field that
     starts inside a range and ends past its high is only rejected when that
     component is planned — which the pooled group update need not do.
     """
-    device = Series7(unit)
+    device = Series7(mock_modbus_unit)
     for component in device.components:
         await component.async_update()
 
@@ -246,20 +248,22 @@ async def test_update_listener(series7: Series7) -> None:
 
 
 async def test_write_setpoint_uses_write_register(
-    series7: Series7, unit: MockModbusUnit
+    series7: Series7, mock_modbus_unit: MockModbusUnit
 ) -> None:
     """The heating setpoint reads from 745 but writes to 12619."""
     await series7.thermostat.set_heating_setpoint(68.0)
     # Written to the command register (12619), not the read register (745).
-    assert (await unit.read_holding_registers(12619, 1))[0] == 680
+    assert (await mock_modbus_unit.read_holding_registers(12619, 1))[0] == 680
 
 
 async def test_write_mode_uses_command_register(
-    series7: Series7, unit: MockModbusUnit
+    series7: Series7, mock_modbus_unit: MockModbusUnit
 ) -> None:
     """Setting the mode writes the plain code to 12606."""
     await series7.thermostat.set_mode(HeatingMode.COOL)
-    assert (await unit.read_holding_registers(12606, 1))[0] == int(HeatingMode.COOL)
+    assert (await mock_modbus_unit.read_holding_registers(12606, 1))[0] == int(
+        HeatingMode.COOL
+    )
 
 
 async def test_write_dhw_setpoint_roundtrip(series7: Series7) -> None:
@@ -363,8 +367,8 @@ async def test_iz2_zone_decode(series7: Series7) -> None:
 
 
 async def test_zone_write_uses_strided_registers(
-    series7: Series7, unit: MockModbusUnit
+    series7: Series7, mock_modbus_unit: MockModbusUnit
 ) -> None:
     """Zone 2's setpoint write lands at 21203 + 9 (its strided command register)."""
     await series7.zones[1].set_heating_setpoint(67.0)
-    assert (await unit.read_holding_registers(21203 + 9, 1))[0] == 670
+    assert (await mock_modbus_unit.read_holding_registers(21203 + 9, 1))[0] == 670
