@@ -20,18 +20,16 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import inspect
 import sys
 import time
-from enum import Flag, IntEnum
 
 from modbus_connection import ModbusError
 from modbus_connection.cli_helper import (
     CountingUnit,
     add_connection_args,
     connect_from_args,
+    print_component,
 )
-from modbus_connection.model import Component, RegisterField
 
 from waterfurnace_modbus import Series7
 
@@ -57,11 +55,6 @@ SECTIONS: list[tuple[str, str]] = [
     ("Dealer", "dealer"),
 ]
 
-# Names carried by the framework base (declared_fields, ranges, max_span, write, …);
-# a sub-system's own data fields never collide with these, so skipping them keeps
-# the dump to real device values.
-_FRAMEWORK_NAMES = frozenset(dir(Component))
-
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -86,53 +79,15 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def _format(value: object) -> str:
-    if value is None:
-        return "—"
-    if isinstance(value, Flag):
-        set_flags = [f.name.lower() for f in type(value) if f.name and f in value]
-        return "|".join(set_flags) if set_flags else "none"
-    if isinstance(value, IntEnum):
-        return value.name.lower()
-    return str(value)
-
-
-def _values(component: Component) -> list[tuple[str, str, str]]:
-    """Public (name, value, unit) rows for a sub-system, in declaration order."""
-    rows: list[tuple[str, str, str]] = []
-    cls = type(component)
-    for name in dir(component):
-        if name.startswith("_") or name in _FRAMEWORK_NAMES:
-            continue
-        static = inspect.getattr_static(cls, name, None)
-        # Skip methods/coroutines; keep RegisterField descriptors, properties,
-        # and plain class constants (e.g. manufacturer).
-        if callable(static) and not isinstance(static, property):
-            continue
-        value = getattr(component, name)
-        if callable(value):
-            continue
-        unit = static.unit or "" if isinstance(static, RegisterField) else ""
-        rows.append((name, _format(value), unit))
-    return rows
-
-
-def _print_section(label: str, rows: list[tuple[str, str, str]]) -> None:
-    print(f"\n{label}")
-    print("-" * len(label))
-    width = max((len(name) for name, _, _ in rows), default=0)
-    for name, value, unit in rows:
-        suffix = f" {unit}" if unit and value != "—" else ""
-        print(f"  {name:<{width}}  {value}{suffix}")
-
-
 def _print(device: Series7) -> None:
     for label, attr in SECTIONS:
-        _print_section(label, _values(getattr(device, attr)))
+        print()
+        print_component(getattr(device, attr), title=label)
     # Only print zones the unit actually has.
     zone_count = device.config.number_of_zones or 0
     for index, zone in enumerate(device.zones[:zone_count], start=1):
-        _print_section(f"Zone {index}", _values(zone))
+        print()
+        print_component(zone, title=f"Zone {index}")
 
 
 async def _run(args: argparse.Namespace) -> int:

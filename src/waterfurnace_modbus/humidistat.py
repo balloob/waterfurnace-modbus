@@ -8,7 +8,7 @@ active dehumidification is currently running.
 
 from __future__ import annotations
 
-from modbus_connection.model import raw_register
+from modbus_connection.model import boolean, raw_register
 
 from .model import AuroraComponent
 
@@ -19,9 +19,11 @@ _AUTO_HUMIDIFY = 0x8000
 class Humidistat(AuroraComponent):
     """Humidification and dehumidification modes and targets."""
 
+    active_dehumidification = boolean(362)
+    """Whether dehumidification is running right now."""
+
     _mode_raw = raw_register(12309)
     _targets_raw = raw_register(12310)
-    _active_dehumidify_raw = raw_register(362)
 
     @property
     def auto_humidification(self) -> bool | None:
@@ -46,9 +48,3 @@ class Humidistat(AuroraComponent):
         """Target relative humidity for dehumidification (%)."""
         raw = self._targets_raw
         return None if raw is None else raw & 0xFF
-
-    @property
-    def active_dehumidification(self) -> bool | None:
-        """Whether dehumidification is running right now."""
-        raw = self._active_dehumidify_raw
-        return None if raw is None else bool(raw)

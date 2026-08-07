@@ -8,7 +8,9 @@ from pathlib import Path
 import pytest
 from modbus_connection.mock import MockModbusUnit
 
-from waterfurnace_modbus import HeatingMode, Series7, SystemOutput
+from waterfurnace_modbus import Series7
+
+from .conftest import HOLDING
 
 _SPEC = importlib.util.spec_from_file_location(
     "waterfurnace_query", Path(__file__).resolve().parents[1] / "script" / "query.py"
@@ -16,16 +18,6 @@ _SPEC = importlib.util.spec_from_file_location(
 assert _SPEC and _SPEC.loader
 query = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(query)
-
-
-def test_format_values() -> None:
-    assert query._format(None) == "—"
-    assert query._format(HeatingMode.HEAT) == "heat"
-    assert query._format(21.5) == "21.5"
-    # IntFlag renders the set flags by name.
-    outputs = SystemOutput.COMPRESSOR_1 | SystemOutput.BLOWER
-    assert query._format(outputs) == "compressor_1|blower"
-    assert query._format(SystemOutput(0)) == "none"
 
 
 def test_parse_args_tcp() -> None:
@@ -53,27 +45,54 @@ def test_parse_args_rejects_a_transport_the_aurora_does_not_offer() -> None:
         query._parse_args(["1.2.3.4", "--transport", "udp"])
 
 
-def test_values_lists_every_subsystem_field(mock_modbus_unit: MockModbusUnit) -> None:
-    """Each sub-system's public fields are enumerated, methods excluded."""
-    device = Series7(mock_modbus_unit)
-    rows = query._values(device.compressor)
-    names = {name for name, _value, _unit in rows}
-    assert {"speed_actual", "discharge_pressure", "superheat"} <= names
-    # Methods / private helpers are not data rows.
-    assert "async_update" not in names
-    assert all(not n.startswith("_") for n in names)
-    # Public framework attributes must not leak in as device values.
-    assert names.isdisjoint(
-        {"declared_fields", "register_ranges", "register_space", "max_span", "max_gap"}
-    )
+def _rows(out: str) -> set[str]:
+    """The printed rows with their alignment padding collapsed."""
+    return {" ".join(line.split()) for line in out.splitlines()}
 
 
-def test_print_runs(
+async def test_print_dumps_every_section_with_decoded_values(
     capsys: pytest.CaptureFixture[str], mock_modbus_unit: MockModbusUnit
 ) -> None:
+    """Every sub-system is printed under its label, with decoded device values."""
+    mock_modbus_unit.holding.update(HOLDING)
     device = Series7(mock_modbus_unit)
+    await device.async_update()
+
     query._print(device)
-    out = capsys.readouterr().out
-    assert "Device" in out
-    assert "Compressor" in out
-    assert "Thermostat" in out
+    rows = _rows(capsys.readouterr().out)
+
+    for label, _attr in query.SECTIONS:
+        assert label in rows
+    assert "entering_water 50.0 °F" in rows  # scaled value carries its unit
+    assert "mode heat" in rows  # IntEnum by name
+    assert "outputs compressor_1|blower" in rows  # IntFlag by its set bits
+    assert "enabled True" in rows  # boolean() register decoded to bool
+
+
+async def test_print_only_shows_the_zones_the_unit_has(
+    capsys: pytest.CaptureFixture[str], mock_modbus_unit: MockModbusUnit
+) -> None:
+    """The IZ2 board reports two zones, so zones 3-6 are not dumped."""
+    mock_modbus_unit.holding.update(HOLDING)
+    device = Series7(mock_modbus_unit)
+    await device.async_update()
+    assert device.config.number_of_zones == 2
+
+    query._print(device)
+    rows = _rows(capsys.readouterr().out)
+
+    assert "Zone 1" in rows
+    assert "Zone 2" in rows
+    assert "Zone 3" not in rows
+
+
+def test_print_survives_an_unread_device(
+    capsys: pytest.CaptureFixture[str], mock_modbus_unit: MockModbusUnit
+) -> None:
+    """Dumping before any read prints placeholders, not a crash."""
+    query._print(Series7(mock_modbus_unit))
+    rows = _rows(capsys.readouterr().out)
+
+    assert "Compressor" in rows
+    # A field with no value renders as a bare placeholder, without its unit.
+    assert "entering_water —" in rows

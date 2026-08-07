@@ -5,7 +5,6 @@ from __future__ import annotations
 import pytest
 from modbus_connection import ClientClosedError
 from modbus_connection.mock import MockModbusConnection, MockModbusUnit
-from modbus_connection.model import ComponentGroup
 
 from waterfurnace_modbus import (
     BlowerType,
@@ -21,34 +20,6 @@ from waterfurnace_modbus import (
 from waterfurnace_modbus.ranges import REGISTER_RANGES
 
 from .conftest import HOLDING
-
-
-class _CountingUnit:
-    """Wraps a ModbusUnit and records read calls; delegates everything else."""
-
-    def __init__(self, inner: MockModbusUnit) -> None:
-        self._inner = inner
-        self.register_blocks: list[tuple[int, int]] = []
-        self.coil_blocks: list[tuple[int, int]] = []
-
-    @property
-    def register_reads(self) -> int:
-        return len(self.register_blocks)
-
-    @property
-    def coil_reads(self) -> int:
-        return len(self.coil_blocks)
-
-    async def read_holding_registers(self, address: int, count: int) -> list[int]:
-        self.register_blocks.append((address, count))
-        return await self._inner.read_holding_registers(address, count)
-
-    async def read_coils(self, address: int, count: int) -> list[bool]:
-        self.coil_blocks.append((address, count))
-        return await self._inner.read_coils(address, count)
-
-    def __getattr__(self, name: str) -> object:
-        return getattr(self._inner, name)
 
 
 async def test_device_info(series7: Series7) -> None:
@@ -157,38 +128,34 @@ async def test_independent_component_update(series7: Series7) -> None:
 async def test_full_update_consolidates_reads(mock_modbus_unit: MockModbusUnit) -> None:
     """A full device update pools all sub-systems into a few block reads."""
     mock_modbus_unit.holding.update(HOLDING)
-    unit = _CountingUnit(mock_modbus_unit)
-    device = Series7(unit)  # type: ignore[arg-type]
-
+    device = Series7(mock_modbus_unit)
     field_count = sum(len(c.declared_fields) for c in device.components)
+
     await device.async_update()
 
+    blocks = mock_modbus_unit.read_events
     # Fields collapse into range-aware block reads — meaningfully fewer than the
     # field count, and no coil reads (this device has none).
-    assert unit.register_reads < field_count
-    assert unit.coil_reads == 0
+    assert len(blocks) < field_count
+    assert all(block.register_type == "holding" for block in blocks)
     # No block exceeds the ABC's 100-register read cap.
-    assert all(count <= 100 for _start, count in unit.register_blocks)
+    assert all(block.count <= 100 for block in blocks)
 
 
 async def test_full_update_never_reads_across_an_unreadable_gap(
     mock_modbus_unit: MockModbusUnit,
 ) -> None:
     """Every block stays inside the controller's readable ranges (no NAK risk)."""
-    device = Series7(mock_modbus_unit)
-    # The same pooled read async_update() performs. async_read_raw reports every
-    # address it touched, so a block spanning a gap shows up as a read of an
-    # address no range declares.
-    raw = await ComponentGroup(mock_modbus_unit, device.components).async_read_raw()
+    await Series7(mock_modbus_unit).async_update()
 
-    unreadable = {
-        address
-        for address in raw["holding"]
-        if not any(low <= address <= high for low, high in REGISTER_RANGES)
-    }
-    assert not unreadable, f"read addresses outside every readable range: {unreadable}"
-    # Everything on this device is a holding register; no other space is touched.
-    assert set(raw) == {"holding"}
+    def readable(address: int) -> bool:
+        return any(low <= address <= high for low, high in REGISTER_RANGES)
+
+    for block in mock_modbus_unit.read_events:
+        last = block.address + block.count - 1
+        assert all(readable(address) for address in range(block.address, last + 1)), (
+            f"block {block.address}..{last} crosses an unreadable gap"
+        )
 
 
 async def test_every_sub_system_plans_on_its_own(
@@ -271,6 +238,21 @@ async def test_write_dhw_setpoint_roundtrip(series7: Series7) -> None:
     await series7.dhw.set_setpoint(125.0)
     await series7.dhw.async_update()
     assert series7.dhw.setpoint == pytest.approx(125.0)
+
+
+async def test_write_dhw_enabled_roundtrip(
+    series7: Series7, mock_modbus_unit: MockModbusUnit
+) -> None:
+    """The enable flag encodes to the 0/1 register the Aurora expects."""
+    await series7.dhw.set_enabled(False)
+    assert (await mock_modbus_unit.read_holding_registers(400, 1))[0] == 0
+    await series7.dhw.async_update()
+    assert series7.dhw.enabled is False
+
+    await series7.dhw.set_enabled(True)
+    assert (await mock_modbus_unit.read_holding_registers(400, 1))[0] == 1
+    await series7.dhw.async_update()
+    assert series7.dhw.enabled is True
 
 
 async def test_write_rejects_out_of_range(series7: Series7) -> None:
