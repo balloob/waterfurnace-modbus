@@ -203,6 +203,27 @@ async def test_update_after_close_raises() -> None:
         await device.async_update()
 
 
+async def test_disconnect_recycles_the_link_silently() -> None:
+    """disconnect() drops a stuck link; the next update reconnects.
+
+    Unlike close() it is not permanent, and unlike a real drop it does not
+    fire on_connection_lost — the owner tore the link down deliberately.
+    """
+    connection = MockModbusConnection()
+    unit = connection.for_unit(1)
+    unit.holding.update(HOLDING)
+    device = Series7(unit)
+    await device.async_update()
+
+    lost: list[int] = []
+    connection.on_connection_lost(lambda: lost.append(1))
+    await connection.disconnect()
+    assert lost == []  # a deliberate teardown is not a lost connection
+
+    await device.async_update()
+    assert device.sensors.entering_water == pytest.approx(50.0)
+
+
 async def test_update_listener(series7: Series7) -> None:
     calls: list[int] = []
     unsubscribe = series7.compressor.add_update_listener(lambda: calls.append(1))
