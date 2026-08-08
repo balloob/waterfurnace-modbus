@@ -58,7 +58,7 @@ async def main() -> None:
     # connects, and a later drop re-connects on its own.
     conn = ModbusConnection(ModbusTcpParams(host="192.168.1.50", framer="rtu"))
     try:
-        heat_pump = Series7(conn.for_unit(1))            # unit 1 = the Aurora ABC
+        heat_pump = Series7(conn.for_unit(1))  # unit 1 = the Aurora ABC
         await heat_pump.async_update()
 
         print("Model:", heat_pump.info.model)
@@ -91,7 +91,7 @@ never closes between polls to force a reconnect.
 ### Updating just one sub-system
 
 ```python
-await heat_pump.compressor.async_update()          # only reads the VS-drive registers
+await heat_pump.compressor.async_update()  # only reads the VS-drive registers
 unsub = heat_pump.compressor.add_update_listener(refresh_my_entity)
 ```
 
@@ -141,7 +141,7 @@ components it surfaces (or builds its own `ComponentGroup` over that subset):
 from modbus_connection.model import ComponentGroup
 
 hot = ComponentGroup(unit, [hp.status, hp.sensors, hp.compressor, *hp.zones])
-await hot.async_update()        # fast-changing values, polled often
+await hot.async_update()  # fast-changing values, polled often
 await hp.config.async_update()  # once at startup
 ```
 
