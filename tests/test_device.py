@@ -158,6 +158,25 @@ async def test_full_update_never_reads_across_an_unreadable_gap(
         )
 
 
+async def test_every_field_lands_in_a_readable_range(
+    mock_modbus_unit: MockModbusUnit,
+) -> None:
+    """Every field the map declares sits wholly inside one readable range.
+
+    ``resolved_fields`` reports where each field lands on the device, so this
+    checks the register map itself — including each zone's strided placement and
+    the write-side command registers — without reading anything.
+    """
+    for component in Series7(mock_modbus_unit).components:
+        for name, resolved in component.resolved_fields.items():
+            last = resolved.address + resolved.count - 1
+            assert resolved.space == "holding"  # the ABC has nothing else
+            assert any(
+                low <= resolved.address and last <= high
+                for low, high in REGISTER_RANGES
+            ), f"{type(component).__name__}.{name} at {resolved.address}..{last}"
+
+
 async def test_every_sub_system_plans_on_its_own(
     mock_modbus_unit: MockModbusUnit,
 ) -> None:

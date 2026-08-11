@@ -41,7 +41,11 @@ against an in-memory mock of the controller.
 - Each sub-system can refresh on its own and has its **own update listeners**, so
   a single Home Assistant entity can subscribe to just the part it shows.
 - Everything lives in the holding-register space (FC03); this device has no
-  coils — booleans are packed as bits inside status registers.
+  coils — booleans are packed as bits inside status registers. A whole bitmask
+  (the outputs word, the drive alarms) is a `flags()` field; a single setting
+  sharing a register with others (a zone's mode, damper and targets, the
+  humidistat's) is declared as its own `bit()` / `bits()` field, so the packing
+  stays in the register map instead of in property code.
 - Units of measurement live in each property's docstring, not in the value.
 
 ## Use
