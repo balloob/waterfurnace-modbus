@@ -125,6 +125,65 @@ async def test_independent_component_update(series7: Series7) -> None:
     assert series7.compressor.speed_actual is None  # not updated yet
 
 
+async def test_setup_runs_once_and_the_poll_leaves_it_alone(
+    series7: Series7, mock_modbus_unit: MockModbusUnit
+) -> None:
+    """Identity and installed-hardware registers are read in setup, never polled.
+
+    They cannot change while the unit runs, so the poll covers only what can.
+    """
+    await series7.async_update()  # sets up, then polls
+    assert series7.info.model == "NDV049A111"
+    assert series7.dealer.name == "ACME HVAC"
+    setup_and_poll = list(mock_modbus_unit.read_events)
+
+    mock_modbus_unit.read_events.clear()
+    await series7.async_update()
+    poll = mock_modbus_unit.read_events
+
+    for component in (
+        series7.info,
+        series7.config,
+        series7.peripherals,
+        series7.dealer,
+    ):
+        assert component not in series7.polled_components
+    assert sum(block.count for block in poll) < sum(
+        block.count for block in setup_and_poll
+    )
+    # The dealer's 73 registers sit in a range of their own, so the poll drops
+    # them entirely. Setup registers that share a range with a polled field are
+    # still swept over by the block that reads it — over-read, not re-decoded.
+    assert any(block.address >= 31400 for block in setup_and_poll)
+    assert not any(block.address >= 31400 for block in poll)
+    # The values setup read are still there after a poll that did not re-read them.
+    assert series7.info.model == "NDV049A111"
+    assert series7.dealer.name == "ACME HVAC"
+
+
+async def test_only_the_zones_the_unit_has_are_polled(series7: Series7) -> None:
+    """``live_zones`` is sized from the IZ2 zone count, and only those are read."""
+    await series7.async_update()
+
+    assert series7.config.number_of_zones == 2
+    assert series7.live_zones == series7.zones[:2]
+    assert series7.live_zones[1].ambient_temperature == pytest.approx(68.0)
+    # The other four Zone objects exist but are never read.
+    assert all(zone.ambient_temperature is None for zone in series7.zones[2:])
+
+
+async def test_setup_can_run_explicitly_before_any_poll(series7: Series7) -> None:
+    """A consumer that wants setup failures apart from poll failures runs it itself."""
+    await series7.async_setup()
+
+    assert series7.info.model == "NDV049A111"
+    assert series7.live_zones == series7.zones[:2]
+    assert series7.status.outputs is None  # nothing polled yet
+
+    await series7.async_update()
+    assert series7.status.outputs is not None
+
+
 async def test_full_update_consolidates_reads(mock_modbus_unit: MockModbusUnit) -> None:
     """A full device update pools all sub-systems into a few block reads."""
     mock_modbus_unit.holding.update(HOLDING)

@@ -84,8 +84,7 @@ def _print(device: Series7) -> None:
         print()
         print_component(getattr(device, attr), title=label)
     # Only print zones the unit actually has.
-    zone_count = device.config.number_of_zones or 0
-    for index, zone in enumerate(device.zones[:zone_count], start=1):
+    for index, zone in enumerate(device.live_zones, start=1):
         print()
         print_component(zone, title=f"Zone {index}")
 

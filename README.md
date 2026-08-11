@@ -37,9 +37,14 @@ against an in-memory mock of the controller.
   | `energy` | per-load electrical power and geothermal heat transfer |
   | `dealer` | installer contact details (diagnostic) |
   | `zones` | up to six IntelliZone 2 (IZ2) zones, each its own `Zone` (mode, setpoints, damper, call) |
+  | `live_zones` | the zones this unit actually has — `zones` sized by the IZ2 count |
 
 - Each sub-system can refresh on its own and has its **own update listeners**, so
   a single Home Assistant entity can subscribe to just the part it shows.
+- **Setup once, then poll.** `info`, `config`, `peripherals` and `dealer` describe
+  hardware that cannot change while the unit runs, so `async_setup()` reads them
+  once and settles how many zones are real; `async_update()` then refreshes only
+  `polled_components` — 22 block reads / 253 registers instead of 25 / 466.
 - Everything lives in the holding-register space (FC03); this device has no
   coils — booleans are packed as bits inside status registers. A whole bitmask
   (the outputs word, the drive alarms) is a `flags()` field; a single setting
@@ -73,9 +78,8 @@ async def main() -> None:
         print("Total power:", heat_pump.energy.total_power, "W")
         print("Fault:", heat_pump.status.fault)
 
-        for i in range(heat_pump.config.number_of_zones or 0):
-            zone = heat_pump.zones[i]
-            print(f"Zone {i + 1}:", zone.mode, zone.ambient_temperature, "°F")
+        for index, zone in enumerate(heat_pump.live_zones, start=1):
+            print(f"Zone {index}:", zone.mode, zone.ambient_temperature, "°F")
 
         # Writes (the read/write address split and scaling are handled for you)
         await heat_pump.thermostat.set_heating_setpoint(70.0)
@@ -135,22 +139,39 @@ setpoints/modes, humidistat, energy monitoring, dealer info, and up to six IZ2
 zones. Only registers whose encoding is unknown even in the upstream map, and the
 raw fault-history buffer, are left out.
 
-`Series7.async_update()` refreshes **everything** — convenient for the CLI,
-but more than a Home Assistant integration needs each poll. Because every
-sub-system is an independent `Component`, an integration typically reads `config`
-and `peripherals` **once** to discover the hardware, then polls only the
-components it surfaces (or builds its own `ComponentGroup` over that subset):
+The device sets itself up before its first poll. `async_setup()` reads the
+registers that cannot change while the unit runs — identity, installed-hardware
+config, board presence, dealer details — and sizes `live_zones` from the IZ2 zone
+count. `async_update()` runs it for you on the first call, then refreshes only
+`polled_components`: status, sensors, compressor, blower, pump, DHW, thermostat,
+humidistat, energy and the live zones.
+
+```python
+heat_pump = Series7(unit)
+await heat_pump.async_setup()   # once: identity, config, boards, zone count
+await heat_pump.async_update()  # every poll: 22 block reads, 253 registers
+```
+
+Call `async_setup()` yourself where "this device is unusable" and "this poll
+failed" are different outcomes — a Home Assistant integration raising
+`ConfigEntryNotReady` from setup and `UpdateFailed` from a poll. A failed setup
+leaves the device unset up, so the next `async_update()` retries it.
+
+A board the unit does not have still *answers* its registers, with `0` rather
+than a refusal, so DHW and energy stay in the poll on every unit: dropping them
+would save a few registers and risk losing real values if the configuration
+registers misreport. Which **entities** to create is a consumer's decision, and
+`config` plus the `peripherals.has_*` flags are what it decides from. To poll a
+narrower set than `polled_components` — one entity's sub-system, say — build a
+`ComponentGroup` over it, or refresh a single component on its own:
 
 ```python
 from modbus_connection.model import ComponentGroup
 
-hot = ComponentGroup(unit, [hp.status, hp.sensors, hp.compressor, *hp.zones])
-await hot.async_update()  # fast-changing values, polled often
-await hp.config.async_update()  # once at startup
+hot = ComponentGroup(unit, [hp.status, hp.compressor, *hp.live_zones])
+await hot.async_update()          # just the fast-changing part
+await hp.compressor.async_update()  # or one sub-system
 ```
-
-Not every unit has every board: `config.number_of_zones` is `0` without IZ2, and
-the `peripherals.has_*` flags tell you which sub-systems are worth polling.
 
 ## Develop / test
 
