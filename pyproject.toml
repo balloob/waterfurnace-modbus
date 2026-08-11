@@ -17,13 +17,13 @@ classifiers = [
 ]
 # Protocol + the device-modelling framework (modbus_connection.model). The caller
 # injects a ModbusUnit built from whichever backend they choose.
-dependencies = ["modbus-connection>=4.4"]
+dependencies = ["modbus-connection>=4.5"]
 
 [project.optional-dependencies]
 # Concrete backend for the script/query.py CLI (pip install waterfurnace-modbus[cli]).
 # tmodbus speaks both transports the Aurora needs — RTU-over-TCP and serial RTU —
 # and is the backend modbus-connection's own suite runs against.
-cli = ["modbus-connection[tmodbus]>=4.4"]
+cli = ["modbus-connection[tmodbus]>=4.5"]
 
 [project.urls]
 Homepage = "https://github.com/balloob/waterfurnace-modbus"
