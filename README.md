@@ -148,7 +148,7 @@ humidistat, energy and the live zones.
 
 ```python
 heat_pump = Series7(unit)
-await heat_pump.async_setup()   # once: identity, config, boards, zone count
+await heat_pump.async_setup()  # once: identity, config, boards, zone count
 await heat_pump.async_update()  # every poll: 22 block reads, 253 registers
 ```
 
@@ -169,7 +169,7 @@ narrower set than `polled_components` — one entity's sub-system, say — build
 from modbus_connection.model import ComponentGroup
 
 hot = ComponentGroup(unit, [hp.status, hp.compressor, *hp.live_zones])
-await hot.async_update()          # just the fast-changing part
+await hot.async_update()  # just the fast-changing part
 await hp.compressor.async_update()  # or one sub-system
 ```
 
