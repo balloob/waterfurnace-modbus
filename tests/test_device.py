@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import pytest
-from modbus_connection import ClientClosedError
+from modbus_connection import ClientClosedError, IllegalDataAddressError
 from modbus_connection.mock import MockModbusConnection, MockModbusUnit
 
 from waterfurnace_modbus import (
@@ -177,6 +177,33 @@ async def test_setup_can_run_explicitly_before_any_poll(series7: Series7) -> Non
 
     await series7.async_update()
     assert series7.status.outputs is not None
+
+
+async def test_read_raw_covers_the_setup_only_blocks_too(series7: Series7) -> None:
+    """A dump an issue report can use needs the identity blocks, not just the poll."""
+    raw = await series7.async_read_raw()
+
+    assert set(raw) == {"holding"}
+    holding = raw["holding"]
+    assert holding[2] == 305  # identity: read at setup, never polled
+    assert holding[483] == 2  # config: read at setup, never polled
+    assert 31400 in holding  # dealer
+    assert holding[16] == 244  # status: polled
+    assert holding[31010] == 680  # zone 2: polled
+    assert 31013 not in holding  # zone 3 is not live, so it is not read
+
+
+async def test_read_raw_leaves_out_a_dealer_block_the_unit_refuses(
+    series7: Series7, mock_modbus_unit: MockModbusUnit
+) -> None:
+    """Setup writes the dealer block off; the dump must not read it back in."""
+    mock_modbus_unit.fail_read(31400, IllegalDataAddressError())
+    await series7.async_setup()
+
+    raw = await series7.async_read_raw()
+
+    assert 31400 not in raw["holding"]
+    assert raw["holding"][2] == 305
 
 
 async def test_full_update_consolidates_reads(mock_modbus_unit: MockModbusUnit) -> None:

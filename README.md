@@ -201,6 +201,22 @@ await hot.async_update()  # just the fast-changing part
 await hp.compressor.async_update()  # or one sub-system
 ```
 
+### Raw register dump
+
+`async_read_raw()` reads every register the device reads and returns it
+undecoded, keyed by address space and address — the payload a bug report wants.
+It covers the setup-only blocks (identity, config, boards, dealer) as well as the
+polled ones, and leaves out what this unit does not serve: the dealer block where
+it refused those addresses, and the zones past `live_zones`.
+
+```python
+raw = await heat_pump.async_read_raw()
+raw["holding"]  # {address: value} — everything on this device is FC03
+```
+
+The dump replays into `modbus-connection`'s mock backend through `load_raw()`, so
+one attached to an issue can back a regression test with no hardware.
+
 ## Develop / test
 
 ```bash
