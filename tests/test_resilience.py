@@ -9,7 +9,11 @@ time, and :meth:`Series7.async_update` reports what got through.
 from __future__ import annotations
 
 import pytest
-from modbus_connection import ModbusConnectionError, ModbusTimeoutError
+from modbus_connection import (
+    IllegalDataAddressError,
+    ModbusConnectionError,
+    ModbusTimeoutError,
+)
 from modbus_connection.mock import MockModbusUnit
 
 from waterfurnace_modbus import Series7
@@ -108,3 +112,30 @@ async def test_a_failed_setup_raises_and_the_next_update_retries(
     report = await device.async_update()
     assert report.complete
     assert device.info.model == "NDV049A111"
+
+
+async def test_a_unit_that_refuses_the_dealer_block_still_sets_up(
+    series7: Series7, mock_modbus_unit: MockModbusUnit
+) -> None:
+    """Dealer details are commissioning trivia, not part of what the device is."""
+    mock_modbus_unit.fail_read(31400, IllegalDataAddressError())
+
+    report = await series7.async_update()
+
+    assert report.complete
+    assert series7.dealer.name is None
+    assert series7.info.model == "NDV049A111"
+
+
+async def test_a_slow_dealer_block_is_retried_rather_than_written_off(
+    series7: Series7, mock_modbus_unit: MockModbusUnit
+) -> None:
+    """A timeout says nothing about whether the unit serves those addresses."""
+    mock_modbus_unit.fail_read(31400, ModbusTimeoutError("slow dealer block"))
+
+    with pytest.raises(ModbusTimeoutError):
+        await series7.async_update()
+
+    mock_modbus_unit.fail_read(31400, None)
+    await series7.async_update()
+    assert series7.dealer.name == "ACME HVAC"

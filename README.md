@@ -158,7 +158,10 @@ await heat_pump.async_update()  # every poll: 32 block reads, 332 registers
 Call `async_setup()` yourself where "this device is unusable" and "this poll
 failed" are different outcomes — a Home Assistant integration raising
 `ConfigEntryNotReady` from setup and `UpdateFailed` from a poll. A failed setup
-leaves the device unset up, so the next `async_update()` retries it.
+leaves the device unset up, so the next `async_update()` retries it. The dealer
+block is the one exception to "setup must succeed": it is commissioning trivia,
+so a unit that *refuses* those addresses outright is set up without it — a
+timeout or a busy device still fails setup and is retried.
 
 ### Partial updates
 

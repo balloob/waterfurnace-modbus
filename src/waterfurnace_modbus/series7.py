@@ -4,7 +4,12 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from modbus_connection import ModbusConnectionError, ModbusError
+from modbus_connection import (
+    IllegalDataAddressError,
+    IllegalFunctionError,
+    ModbusConnectionError,
+    ModbusError,
+)
 from modbus_connection.model import Component, ComponentGroup
 
 from .blower import Blower
@@ -121,10 +126,19 @@ class Series7:
         "this poll failed" are different outcomes, as they are for a Home
         Assistant config entry. A failure leaves the device unset up, so the
         next :meth:`async_update` tries again.
+
+        Identity, configuration and board presence are what the device is; the
+        dealer block is commissioning trivia the AWL tools write, so a unit that
+        refuses those addresses outright is set up without it rather than never
+        set up at all.
         """
         await ComponentGroup(
-            self._unit, [self.info, self.config, self.peripherals, self.dealer]
+            self._unit, [self.info, self.config, self.peripherals]
         ).async_update()
+        try:
+            await self.dealer.async_update()
+        except (IllegalDataAddressError, IllegalFunctionError):
+            pass  # this unit does not serve the block; a transient error still raises
         self.live_zones = self.zones[: self.config.number_of_zones or 0]
         # The poll list doubles as the setup marker: None means "not set up yet".
         self._polled = {name: getattr(self, name) for name in _POLLED}
