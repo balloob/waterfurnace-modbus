@@ -44,7 +44,10 @@ against an in-memory mock of the controller.
 - **Setup once, then poll.** `info`, `config`, `peripherals` and `dealer` describe
   hardware that cannot change while the unit runs, so `async_setup()` reads them
   once and settles how many zones are real; `async_update()` then refreshes only
-  `polled_components` — 22 block reads / 253 registers instead of 25 / 466.
+  what can change — 32 block reads / 332 registers instead of 38 / 561.
+- **A failed block costs one sub-system, not the poll.** Each sub-system is read
+  on its own, so a slow or refused block leaves the rest fresh — see
+  [Partial updates](#partial-updates).
 - Everything lives in the holding-register space (FC03); this device has no
   coils — booleans are packed as bits inside status registers. A whole bitmask
   (the outputs word, the drive alarms) is a `flags()` field; a single setting
@@ -143,13 +146,13 @@ The device sets itself up before its first poll. `async_setup()` reads the
 registers that cannot change while the unit runs — identity, installed-hardware
 config, board presence, dealer details — and sizes `live_zones` from the IZ2 zone
 count. `async_update()` runs it for you on the first call, then refreshes only
-`polled_components`: status, sensors, compressor, blower, pump, DHW, thermostat,
+what can change: status, sensors, compressor, blower, pump, DHW, thermostat,
 humidistat, energy and the live zones.
 
 ```python
 heat_pump = Series7(unit)
 await heat_pump.async_setup()  # once: identity, config, boards, zone count
-await heat_pump.async_update()  # every poll: 22 block reads, 253 registers
+await heat_pump.async_update()  # every poll: 32 block reads, 332 registers
 ```
 
 Call `async_setup()` yourself where "this device is unusable" and "this poll
@@ -157,12 +160,34 @@ failed" are different outcomes — a Home Assistant integration raising
 `ConfigEntryNotReady` from setup and `UpdateFailed` from a poll. A failed setup
 leaves the device unset up, so the next `async_update()` retries it.
 
+### Partial updates
+
+A poll reads each sub-system on its own, so one slow or refused block does not
+take the rest with it. `async_update()` returns an `UpdateReport` — a failed
+sub-system keeps its previous values, does not notify its listeners, and is
+listed by name with its error, while every other sub-system refreshes and
+notifies once the whole poll is done. Zones are named `zone_1` … `zone_6` after
+their position in `live_zones`; everything else by its attribute name. Only a
+dead link (`ModbusConnectionError`) raises:
+
+```python
+report = await heat_pump.async_update()
+for name, error in report.failed.items():
+    print(f"{name} kept its previous values: {error}")
+```
+
+Reading per sub-system costs more Modbus traffic than pooling every register of
+the device into one plan would (32 blocks / 332 registers against 22 / 253),
+because sub-systems whose registers sit near each other — the AXB block at
+1105-1165, say — no longer share a read. That is the price of containment on a
+controller this spread out.
+
 A board the unit does not have still *answers* its registers, with `0` rather
 than a refusal, so DHW and energy stay in the poll on every unit: dropping them
 would save a few registers and risk losing real values if the configuration
 registers misreport. Which **entities** to create is a consumer's decision, and
 `config` plus the `peripherals.has_*` flags are what it decides from. To poll a
-narrower set than `polled_components` — one entity's sub-system, say — build a
+narrower set than the whole device — one entity's sub-system, say — build a
 `ComponentGroup` over it, or refresh a single component on its own:
 
 ```python

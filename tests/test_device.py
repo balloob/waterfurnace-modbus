@@ -138,16 +138,11 @@ async def test_setup_runs_once_and_the_poll_leaves_it_alone(
     setup_and_poll = list(mock_modbus_unit.read_events)
 
     mock_modbus_unit.read_events.clear()
-    await series7.async_update()
+    report = await series7.async_update()
     poll = mock_modbus_unit.read_events
 
-    for component in (
-        series7.info,
-        series7.config,
-        series7.peripherals,
-        series7.dealer,
-    ):
-        assert component not in series7.polled_components
+    assert report.complete
+    assert not {"info", "config", "peripherals", "dealer"} & report.updated
     assert sum(block.count for block in poll) < sum(
         block.count for block in setup_and_poll
     )
@@ -185,7 +180,7 @@ async def test_setup_can_run_explicitly_before_any_poll(series7: Series7) -> Non
 
 
 async def test_full_update_consolidates_reads(mock_modbus_unit: MockModbusUnit) -> None:
-    """A full device update pools all sub-systems into a few block reads."""
+    """A full device update collapses fields into range-aware block reads."""
     mock_modbus_unit.holding.update(HOLDING)
     device = Series7(mock_modbus_unit)
     field_count = sum(len(c.declared_fields) for c in device.components)
@@ -193,8 +188,9 @@ async def test_full_update_consolidates_reads(mock_modbus_unit: MockModbusUnit) 
     await device.async_update()
 
     blocks = mock_modbus_unit.read_events
-    # Fields collapse into range-aware block reads — meaningfully fewer than the
-    # field count, and no coil reads (this device has none).
+    # Each sub-system plans its own reads, but adjacent fields still merge —
+    # meaningfully fewer blocks than fields, and no coil reads (this device has
+    # none).
     assert len(blocks) < field_count
     assert all(block.register_type == "holding" for block in blocks)
     # No block exceeds the ABC's 100-register read cap.
@@ -241,9 +237,8 @@ async def test_every_sub_system_plans_on_its_own(
 ) -> None:
     """No sub-system declares a field that straddles a readable-range boundary.
 
-    A component polled on its own plans from its own fields, so a field that
-    starts inside a range and ends past its high is only rejected when that
-    component is planned — which the pooled group update need not do.
+    The poll plans each sub-system from its own fields, so this is what it does
+    — extended to the components setup reads and to the zones this unit lacks.
     """
     device = Series7(mock_modbus_unit)
     for component in device.components:
