@@ -76,6 +76,35 @@ async def test_a_failed_zone_is_reported_by_its_position(
     assert series7.zones[1].ambient_temperature == pytest.approx(68.0)  # kept
 
 
+async def test_the_axb_sharers_still_fail_one_at_a_time(
+    series7: Series7, mock_modbus_unit: MockModbusUnit
+) -> None:
+    """Blower, pump, compressor and energy overlap in 1105-1165 but stay separate.
+
+    Their blocks overlap, so pooling them into one ``ComponentGroup`` would read
+    the span once and save three requests. It is not worth it: a group's read
+    plan is all-or-nothing, and each of the four also reads registers nowhere
+    near the AXB — the compressor's whole VS-drive telemetry above 3000, the
+    blower's ECM presets at 340, the pump's limits at 321. Pooling would let the
+    optional AXB energy-monitor block take all of that down with it.
+    """
+    await series7.async_update()
+
+    # A VS-drive failure is compressor-only; the AXB sharers keep refreshing.
+    mock_modbus_unit.fail_read(3322, ModbusTimeoutError("slow VS drive"))
+    report = await series7.async_update()
+    assert set(report.failed) == {"compressor"}
+    assert {"blower", "pump", "energy"} <= report.updated
+    assert series7.pump.waterflow == pytest.approx(9.5)
+
+    # And the reverse: the AXB block the energy monitor owns is not the drive's.
+    mock_modbus_unit.fail_read(3322, None)
+    mock_modbus_unit.fail_read(1146, ModbusTimeoutError("no energy monitor"))
+    report = await series7.async_update()
+    assert "compressor" in report.updated
+    assert series7.compressor.discharge_pressure == pytest.approx(350.0)
+
+
 async def test_a_dead_link_raises_instead_of_reporting(
     series7: Series7, mock_modbus_unit: MockModbusUnit
 ) -> None:

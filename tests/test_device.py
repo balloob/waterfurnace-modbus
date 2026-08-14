@@ -206,6 +206,20 @@ async def test_read_raw_leaves_out_a_dealer_block_the_unit_refuses(
     assert raw["holding"][2] == 305
 
 
+async def test_read_raw_refreshes_the_fields_without_notifying(
+    series7: Series7,
+) -> None:
+    """A diagnostics download is not a poll, so nothing subscribed hears it."""
+    await series7.async_setup()
+    calls: list[int] = []
+    series7.sensors.add_update_listener(lambda: calls.append(1))
+
+    await series7.async_read_raw()
+
+    assert calls == []
+    assert series7.sensors.entering_water == pytest.approx(50.0)  # still refreshed
+
+
 async def test_full_update_consolidates_reads(mock_modbus_unit: MockModbusUnit) -> None:
     """A full device update collapses fields into range-aware block reads."""
     mock_modbus_unit.holding.update(HOLDING)

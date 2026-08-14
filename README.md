@@ -214,6 +214,9 @@ raw = await heat_pump.async_read_raw()
 raw["holding"]  # {address: value} — everything on this device is FC03
 ```
 
+The fields refresh but no listener fires, so a diagnostics download does not look
+like a poll to whatever is subscribed.
+
 The dump replays into `modbus-connection`'s mock backend through `load_raw()`, so
 one attached to an issue can back a regression test with no hardware.
 
