@@ -46,7 +46,8 @@ against an in-memory mock of the controller.
   once and settles how many zones are real; `async_update()` then refreshes only
   what can change — 32 block reads / 332 registers instead of 38 / 561.
 - **A failed block costs one sub-system, not the poll.** Each sub-system is read
-  on its own, so a slow or refused block leaves the rest fresh — see
+  on its own, so a slow or refused block leaves the rest fresh — unless nothing
+  has answered yet, when the poll gives up rather than time out eleven times. See
   [Partial updates](#partial-updates).
 - Everything lives in the holding-register space (FC03); this device has no
   coils — booleans are packed as bits inside status registers. A whole bitmask
@@ -170,8 +171,12 @@ take the rest with it. `async_update()` returns an `UpdateReport` — a failed
 sub-system keeps its previous values, does not notify its listeners, and is
 listed by name with its error, while every other sub-system refreshes and
 notifies once the whole poll is done. Zones are named `zone_1` … `zone_6` after
-their position in `live_zones`; everything else by its attribute name. Only a
-dead link (`ModbusConnectionError`) raises:
+their position in `live_zones`; everything else by its attribute name. A dead
+link (`ModbusConnectionError`) raises, and so does a unit that never answered at
+all — the first sub-system read is the poll's probe, and a `ModbusTimeoutError`
+there ends the poll instead of walking the other ten into a timeout each. A
+timeout that is *reported* means the unit answered something else, so only that
+block was slow:
 
 ```python
 report = await heat_pump.async_update()

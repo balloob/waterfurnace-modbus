@@ -24,20 +24,21 @@ from .conftest import HOLDING
 async def test_a_failed_component_leaves_the_rest_fresh(
     series7: Series7, mock_modbus_unit: MockModbusUnit
 ) -> None:
+    """status answers first, so a later slow block costs only its own sub-system."""
     await series7.async_update()
-    before = series7.status.line_voltage
+    before = series7.sensors.entering_air
 
-    mock_modbus_unit.holding[16] = 230  # line voltage changes on the device
-    mock_modbus_unit.holding[740] = 720  # so does entering air
-    mock_modbus_unit.fail_read(16, ModbusTimeoutError("slow status block"))
+    mock_modbus_unit.holding[740] = 720  # entering air changes on the device
+    mock_modbus_unit.holding[16] = 230  # so does line voltage
+    mock_modbus_unit.fail_read(740, ModbusTimeoutError("slow sensor block"))
     report = await series7.async_update()
 
     assert not report.complete
-    assert set(report.failed) == {"status"}
-    assert isinstance(report.failed["status"], ModbusTimeoutError)
-    assert "sensors" in report.updated
-    assert series7.status.line_voltage == before
-    assert series7.sensors.entering_air == pytest.approx(72.0)
+    assert set(report.failed) == {"sensors"}
+    assert isinstance(report.failed["sensors"], ModbusTimeoutError)
+    assert "status" in report.updated
+    assert series7.sensors.entering_air == before
+    assert series7.status.line_voltage == 230
 
 
 async def test_listeners_fire_at_the_end_and_only_for_fresh_components(
@@ -48,9 +49,9 @@ async def test_listeners_fire_at_the_end_and_only_for_fresh_components(
     series7.sensors.add_update_listener(
         lambda: seen.append(len(mock_modbus_unit.read_events))
     )
-    series7.status.add_update_listener(lambda: seen.append(-1))
+    series7.thermostat.add_update_listener(lambda: seen.append(-1))
 
-    mock_modbus_unit.fail_read(16, ModbusTimeoutError("slow status block"))
+    mock_modbus_unit.fail_read(745, ModbusTimeoutError("slow thermostat block"))
     mock_modbus_unit.read_events.clear()
     await series7.async_update()
 
@@ -103,6 +104,39 @@ async def test_the_axb_sharers_still_fail_one_at_a_time(
     report = await series7.async_update()
     assert "compressor" in report.updated
     assert series7.compressor.discharge_pressure == pytest.approx(350.0)
+
+
+async def test_a_silent_unit_raises_on_the_first_timeout(
+    series7: Series7, mock_modbus_unit: MockModbusUnit
+) -> None:
+    """Nothing answered, so the remaining ten sub-systems would only time out too.
+
+    A poll is 32 block reads over an RS-485 line; walking all eleven sub-systems
+    into a 10 s timeout each costs 110 s against a 30 s poll interval, so the
+    probe failing has to end the poll.
+    """
+    await series7.async_update()
+    mock_modbus_unit.fail_requests(ModbusTimeoutError("unit is silent"))
+    mock_modbus_unit.read_events.clear()
+
+    with pytest.raises(ModbusTimeoutError):
+        await series7.async_update()
+
+    assert len(mock_modbus_unit.read_events) == 1  # status, and nothing after it
+
+
+async def test_a_timeout_after_something_answered_is_still_contained(
+    series7: Series7, mock_modbus_unit: MockModbusUnit
+) -> None:
+    """A refusal proves the unit is there, so a later timeout is only slow."""
+    await series7.async_update()
+    mock_modbus_unit.fail_read(16, IllegalDataAddressError())  # status refuses
+    mock_modbus_unit.fail_read(740, ModbusTimeoutError("slow sensor block"))
+
+    report = await series7.async_update()
+
+    assert set(report.failed) == {"status", "sensors"}
+    assert "compressor" in report.updated
 
 
 async def test_a_dead_link_raises_instead_of_reporting(
