@@ -102,7 +102,7 @@ async def test_dhw(series7: Series7) -> None:
 async def test_thermostat_reads(series7: Series7) -> None:
     await series7.async_update()
     t = series7.thermostat
-    assert t.ambient_temperature == pytest.approx(72.0)
+    assert series7.sensors.ambient_air == pytest.approx(72.0)
     assert t.heating_setpoint == pytest.approx(70.0)
     assert t.cooling_setpoint == pytest.approx(75.0)
     assert t.mode is HeatingMode.HEAT  # decoded from bits 8-10
@@ -434,7 +434,7 @@ async def test_humidistat(series7: Series7) -> None:
     assert h.auto_humidification is False
     assert h.humidification_target == 40
     assert h.dehumidification_target == 55
-    assert h.active_dehumidification is True
+    assert series7.status.active_dehumidification is True
 
 
 async def test_compressor_vs_flags_and_subcool(series7: Series7) -> None:
@@ -524,3 +524,112 @@ async def test_outdoor_temperature_without_awl_reads_as_no_value(
     await series7.async_update()
 
     assert series7.sensors.outdoor is None
+
+
+async def test_water_delta_t_is_unsigned(series7: Series7) -> None:
+    """The size is the work done; the direction is the reversing valve's."""
+    await series7.async_update()
+
+    assert series7.water_delta_t == pytest.approx(5.0)  # 50.0 in, 45.0 out
+
+
+async def test_cop_in_heating_adds_the_compressor_work(series7: Series7) -> None:
+    """Heating delivers what came out of the ground plus the work that moved it."""
+    await series7.async_update()
+
+    # 18000 Btuh extracted + 2780 W * 3.412 = 9485 Btuh of work.
+    work = 2780 * 3.412
+    assert series7.cop == pytest.approx((18000 + work) / work)
+
+
+async def test_cop_is_zero_with_the_compressor_off(
+    series7: Series7, mock_modbus_unit: MockModbusUnit
+) -> None:
+    """Nothing is being moved, which is a real answer rather than no answer."""
+    mock_modbus_unit.holding[30] = 0x08  # blower only
+
+    await series7.async_update()
+
+    assert series7.cop == 0.0
+
+
+async def test_cop_ignores_an_implausible_figure(
+    series7: Series7, mock_modbus_unit: MockModbusUnit
+) -> None:
+    """A COP far out of range is a bad register, not a heat pump."""
+    mock_modbus_unit.holding[1152] = [0, 1]  # 1 W in, 18000 Btuh out
+
+    await series7.async_update()
+
+    assert series7.cop is None
+
+
+async def test_approach_temperature_follows_the_reversing_valve(
+    series7: Series7, mock_modbus_unit: MockModbusUnit
+) -> None:
+    """The condenser is the water coax in cooling and the air coil in heating."""
+    mock_modbus_unit.holding[30] = 0x05  # compressor 1 + reversing valve
+
+    await series7.async_update()
+
+    assert series7.approach_temperature == pytest.approx(90.0)  # 140.0 - 50.0 EWT
+
+
+async def test_a_unit_without_an_axb_reads_return_air_elsewhere(
+    mock_modbus_unit: MockModbusUnit,
+) -> None:
+    """Return air moves register with the AXB board, and supply air needs one."""
+    mock_modbus_unit.holding.update(HOLDING)
+    mock_modbus_unit.holding[806] = 0  # AXB not installed
+    mock_modbus_unit.holding[567] = 680  # legacy return-air register -> 68.0
+    device = Series7(mock_modbus_unit)
+
+    await device.async_update()
+
+    assert device.sensors.entering_air == pytest.approx(68.0)
+    assert device.sensors.leaving_air is None
+
+
+async def test_clearing_the_fault_history_writes_the_magic_word(
+    series7: Series7, mock_modbus_unit: MockModbusUnit
+) -> None:
+    """A command, not a setting: nothing reads back as "cleared"."""
+    await series7.async_update()
+
+    await series7.status.async_clear_fault_history()
+
+    assert mock_modbus_unit.holding[47] == 0x5555
+
+
+async def test_readings_and_settings_poll_apart(
+    series7: Series7, mock_modbus_unit: MockModbusUnit
+) -> None:
+    """Neither segment reads a block the other one owns."""
+    await series7.async_update()
+
+    mock_modbus_unit.read_events.clear()
+    readings = await series7.async_update_readings()
+    reading_blocks = {(e.address, e.count) for e in mock_modbus_unit.read_events}
+
+    mock_modbus_unit.read_events.clear()
+    settings = await series7.async_update_settings()
+    setting_blocks = {(e.address, e.count) for e in mock_modbus_unit.read_events}
+
+    assert "sensors" in readings.updated
+    assert "thermostat" in settings.updated
+    assert "thermostat" not in readings.updated
+    assert not reading_blocks & setting_blocks
+
+
+async def test_a_unit_that_cannot_dehumidify_does_not_poll_the_humidistat(
+    mock_modbus_unit: MockModbusUnit,
+) -> None:
+    """Its targets would be settings nothing on the unit honours."""
+    mock_modbus_unit.holding.update(HOLDING)
+    mock_modbus_unit.holding[12309] = 0  # neither auto mode enabled
+    mock_modbus_unit.holding[827] = 0  # and no Symphony link to drive them
+    device = Series7(mock_modbus_unit)
+
+    report = await device.async_update()
+
+    assert "humidistat" not in report.updated
