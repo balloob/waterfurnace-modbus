@@ -489,3 +489,38 @@ async def test_zone_write_uses_strided_registers(
     """Zone 2's setpoint write lands at 21203 + 9 (its strided command register)."""
     await series7.zones[1].set_heating_setpoint(67.0)
     assert (await mock_modbus_unit.read_holding_registers(21203 + 9, 1))[0] == 670
+
+
+async def test_a_missing_sensor_reads_as_no_value(
+    series7: Series7, mock_modbus_unit: MockModbusUnit
+) -> None:
+    """The controller's -999.9 "not present" reading decodes to None, not a value."""
+    mock_modbus_unit.holding[1119] = 0xD8F1  # loop pressure, no transducer fitted
+    mock_modbus_unit.holding[1114] = 0xD8F1  # DHW water temperature, no sensor
+
+    await series7.async_update()
+
+    assert series7.pump.loop_pressure is None  # not 5553.7 psi
+    assert series7.dhw.water_temperature is None  # not -999.9 °F
+
+
+async def test_a_real_pressure_still_decodes(
+    series7: Series7, mock_modbus_unit: MockModbusUnit
+) -> None:
+    """Only the sentinel is suppressed; a fitted transducer reads normally."""
+    mock_modbus_unit.holding[1119] = 550
+
+    await series7.async_update()
+
+    assert series7.pump.loop_pressure == pytest.approx(55.0)
+
+
+async def test_outdoor_temperature_without_awl_reads_as_no_value(
+    series7: Series7, mock_modbus_unit: MockModbusUnit
+) -> None:
+    """The register reads 0 unless AWL-communicating, which is not 0 °F."""
+    mock_modbus_unit.holding[742] = 0
+
+    await series7.async_update()
+
+    assert series7.sensors.outdoor is None
